@@ -1306,6 +1306,8 @@ class TestCase(expecttest.TestCase):
         elif isinstance(x, np.ndarray) and isinstance(y, np.ndarray):
             self.assertEqual(torch.from_numpy(x), torch.from_numpy(y), atol=atol, rtol=rtol, msg=msg,
                              exact_dtype=exact_dtype, exact_device=exact_device)
+        elif isinstance(x, torch.jit.RecursiveScriptClass) and isinstance(y, torch.jit.RecursiveScriptClass):
+            self.assertTrue(x._c.equals(y._c), msg=msg)
         else:
             super().assertEqual(x, y, msg=msg)
 

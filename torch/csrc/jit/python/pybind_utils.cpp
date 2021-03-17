@@ -1,4 +1,5 @@
 #include <torch/csrc/jit/python/pybind_utils.h>
+#include "jit/python/module_python.h"
 
 #include <torch/csrc/jit/python/python_ivalue.h>
 
@@ -152,10 +153,23 @@ IValue toIValue(py::handle obj, const TypePtr& type, c10::optional<int32_t> N) {
     }
     case TypeKind::ClassType: {
       auto classType = type->expect<ClassType>();
-      if (auto mod = as_module(py::cast<py::object>(obj))) {
+      auto object = py::cast<py::object>(obj);
+      if (auto mod = as_module(object)) {
         // if obj is already a ScriptModule, just return its ivalue
         return mod.value()._ivalue();
       }
+
+      // Check if the obj is a ScriptObject.
+      if (auto script_obj = as_object(object)) {
+        return script_obj.value()._ivalue();
+      }
+
+      // try {
+      //   Object* script_object = object.cast<Object*>();
+      //   return script_object->_ivalue();
+      // } catch (...) {
+      // }
+
       // otherwise is a normal class object, we create a fresh
       // ivalue::Object to use from the py object.
       // 1. create a bare ivalue
@@ -203,6 +217,9 @@ IValue toIValue(py::handle obj, const TypePtr& type, c10::optional<int32_t> N) {
       if (auto mod = as_module(py::cast<py::object>(obj))) {
         classType = mod.value().type();
         res = mod.value()._ivalue();
+      } else if (auto object = as_object(py::cast<py::object>(obj))) {
+        classType = object.value().type();
+        res = object.value()._ivalue();
       } else {
         // We inspect the value to found the compiled TorchScript class
         // and then create a ivalue::Object from that class type.
@@ -224,8 +241,8 @@ IValue toIValue(py::handle obj, const TypePtr& type, c10::optional<int32_t> N) {
       std::stringstream why_not;
       if (!classType->isSubtypeOfExt(interfaceType, &why_not)) {
         throw py::cast_error(c10::str(
-            "Object ",
-            py::str(obj),
+            "Object of type ",
+            classType->repr_str(),
             " is not compatible with interface ",
             interfaceType->repr_str(),
             "\n",

@@ -686,6 +686,8 @@ struct C10_EXPORT ivalue::Object final : c10::intrusive_ptr_target {
 
   c10::intrusive_ptr<Object> deepcopy(IValue::HashAliasedIValueMap& memo) const;
 
+  bool equals(const ivalue::Object& rhs) const;
+
  private:
   void resizeObject(size_t slot);
   StrongTypePtr type_;
