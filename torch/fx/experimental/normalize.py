@@ -1,7 +1,7 @@
 import torch
 import torch.fx
 import inspect
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 from torch.fx.node import Argument, Target
 from torch._jit_internal import boolean_dispatched
 
@@ -54,16 +54,10 @@ class NormalizeArgs(Transformer):
             assert callable(target)
             torch_op_schemas = get_signature_for_torch_op(target)
             if torch_op_schemas:
-                # Iterate through all of the schema until we find one that matches
-                # If one matches, populate `new_kwargs` with the combined args/kwargs
-                # values. If none matches, `new_kwargs` will be None
-                for candidate_signature in torch_op_schemas:
-                    try:
-                        candidate_signature.bind(args, kwargs)
-                        new_kwargs = self._args_kwargs_to_normalized_kwargs(candidate_signature, args, kwargs)
-                        break
-                    except TypeError:
-                        continue
+                signature = self._find_overload_with_type_check(torch_op_schemas, args, kwargs)
+                if signature:
+                    new_kwargs = self._args_kwargs_to_normalized_kwargs(signature, args, kwargs)
+
         if new_kwargs:
             # FIXME: `target(**kwargs)` doesn't keep things specified as kwargs
             # in kwargs
@@ -117,3 +111,63 @@ class NormalizeArgs(Transformer):
             new_kwargs[param] = bound_args.arguments[param]
 
         return new_kwargs
+
+    def _find_overload_with_type_check(
+            self, candidate_signatures : List[inspect.Signature], args : Tuple[Argument, ...],
+            kwargs : Dict[str, Any]) -> Optional[inspect.Signature]:
+        """
+        Perform overload resolution on a list of schema given `args` and `kwargs
+        """
+        found_signature = None
+        for candidate_signature in candidate_signatures:
+            try:
+                # For the purposes of schema matching, assume Proxy's are Tensors
+                # This is safe because `__torch_function__` can only dispatch proxie
+                # args for Tensors or containers containing Tensors
+                def proxy_to_tensor(a):
+                    return torch.Tensor() if isinstance(a, torch.fx.Proxy) else a
+                args_for_analysis = torch.fx.node.map_aggregate(args, proxy_to_tensor)
+                assert isinstance(args_for_analysis, tuple)
+                kwargs_for_analysis = torch.fx.node.map_aggregate(kwargs, proxy_to_tensor)
+                assert isinstance(kwargs_for_analysis, dict)
+                bound_args = candidate_signature.bind(*args_for_analysis, **kwargs_for_analysis)
+                bound_args.apply_defaults()
+
+                def does_arg_match_param_type_annotation(arg, t):
+                    origin_type = getattr(t, '__origin__', t)
+
+                    if origin_type is list:
+                        # PythonArgParser accepts tuples for `List`-typed arguments
+                        if not isinstance(arg, (list, tuple)):
+                            return False
+                        contained_types = getattr(t, '__args__')
+                        assert len(contained_types) == 1
+                        return all(does_arg_match_param_type_annotation(a, contained_types[0]) for a in arg)
+                    elif origin_type is Union:
+                        contained_types = getattr(t, '__args__')
+                        return any(does_arg_match_param_type_annotation(arg, t) for t in contained_types)
+                    elif t is torch.Tensor:
+                        # Python arg parser accepts int, float and complex for Tensor-typed
+                        # parameters
+                        # https://github.com/pytorch/pytorch/blob/19792b45dbf30b4555c4a87512e624cdd4aa6e4c/torch/csrc/utils/python_arg_parser.cpp#L1077-L1100?  # noqa
+                        return type(bound_arg) in {torch.Tensor, int, float, complex}
+                    else:
+                        return issubclass(type(arg), t)
+
+
+                # Signature.bind does not check types. Do secondary checking here
+                for k, parameter in candidate_signature.parameters.items():
+                    bound_arg = bound_args.arguments[k]
+                    if parameter.annotation is not inspect.Signature.empty:
+                        # We're the only ones to generate these signatures, we don't use
+                        # string type annotations, so we should be good here
+                        assert not isinstance(parameter.annotation, str)
+
+                        if not does_arg_match_param_type_annotation(bound_arg, parameter.annotation):
+                            raise TypeError()
+
+                found_signature = candidate_signature
+                break
+            except TypeError as e:
+                continue
+        return found_signature

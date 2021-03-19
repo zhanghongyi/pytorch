@@ -34,7 +34,6 @@ except ImportError:
     HAS_TORCHVISION = False
 skipIfNoTorchVision = unittest.skipIf(not HAS_TORCHVISION, "no torchvision")
 
-
 def symbolic_trace_with_rewrite(root: Union[torch.nn.Module, Callable]) -> GraphModule:
     return GraphModule(
         root if isinstance(root, torch.nn.Module) else torch.nn.Module(),
@@ -855,6 +854,47 @@ class {test_classname}(torch.nn.Module):
                     nn_class = getattr(torch.nn, submod_class.__name__)
                     if submod_class == nn_class:
                         self.assertEqual(len(node.args), 0)
+
+
+    def test_normalize_op_overloads(self):
+        # Tensor/Tensor
+        class Foo(torch.nn.Module):
+            def forward(self, x, y):
+                return torch.add(x, y)
+
+        traced = torch.fx.symbolic_trace(Foo())
+        normalized = NormalizeArgs(traced).transform()
+        x, y = torch.randn(3, 4), torch.randn(3, 4)
+        torch.testing.assert_allclose(normalized(x, y), traced(x, y))
+        for node in normalized.graph.nodes:
+            if node.target == torch.add:
+                assert len(node.args) == 0
+
+        # Tensor/scalar
+        class Foo(torch.nn.Module):
+            def forward(self, x, y):
+                return torch.add(x, 3)
+
+        traced = torch.fx.symbolic_trace(Foo())
+        normalized = NormalizeArgs(traced).transform()
+        x, y = torch.randn(3, 4), torch.randn(3, 4)
+        torch.testing.assert_allclose(normalized(x, y), traced(x, y))
+        for node in normalized.graph.nodes:
+            if node.target == torch.add:
+                assert len(node.args) == 0
+
+        # Tensor/scalar
+        class Foo(torch.nn.Module):
+            def forward(self, x, y):
+                return torch.add(3, x)
+
+        traced = torch.fx.symbolic_trace(Foo())
+        normalized = NormalizeArgs(traced).transform()
+        x, y = torch.randn(3, 4), torch.randn(3, 4)
+        torch.testing.assert_allclose(normalized(x, y), traced(x, y))
+        for node in normalized.graph.nodes:
+            if node.target == torch.add:
+                assert len(node.args) == 0
 
     @skipIfNoTorchVision
     def test_annotate_returns_with_schema(self):
