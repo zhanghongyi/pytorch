@@ -16,6 +16,7 @@ from functools import wraps
 
 import torch
 import torch.distributed as c10d
+import torch.cuda.nccl
 
 import faulthandler
 from functools import partial, reduce
