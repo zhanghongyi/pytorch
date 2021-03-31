@@ -79,6 +79,9 @@ class BaseCType:
     def cpp_type_remove_namespaces(self) -> str:
         return str(self.type).replace('at::', '')
 
+    def with_name(self, *, name: str) -> 'BaseCType':
+        return BaseCType(self.type, name)
+
 @dataclass(frozen=True)
 class ConstRefCType:
     elem: 'CType'
@@ -90,6 +93,9 @@ class ConstRefCType:
 
     def cpp_type_remove_namespaces(self) -> str:
         return f'const {self.elem.cpp_type_remove_namespaces()} &'
+
+    def with_name(self, *, name: str) -> 'ConstRefCType':
+        return ConstRefCType(self.elem.with_name(name=name))
 
     @property
     def name(self) -> ArgName:
@@ -107,6 +113,9 @@ class MutRefCType:
     def cpp_type_remove_namespaces(self) -> str:
         return f'{self.elem.cpp_type_remove_namespaces()} &'
 
+    def with_name(self, *, name: str) -> 'MutRefCType':
+        return MutRefCType(self.elem.with_name(name=name))
+
     @property
     def name(self) -> ArgName:
         return self.elem.name
@@ -121,6 +130,9 @@ class OptionalCType:
 
     def cpp_type_remove_namespaces(self) -> str:
         return f'c10::optional<{self.elem.cpp_type_remove_namespaces()}>'
+
+    def with_name(self, *, name: str) -> 'OptionalCType':
+        return OptionalCType(self.elem.with_name(name=name))
 
     @property
     def name(self) -> ArgName:
@@ -137,6 +149,9 @@ class ListCType:
     def cpp_type_remove_namespaces(self) -> str:
         return f'c10::List<{self.elem.cpp_type_remove_namespaces()}>'
 
+    def with_name(self, *, name: str) -> 'ListCType':
+        return ListCType(self.elem.with_name(name=name))
+
     @property
     def name(self) -> ArgName:
         return self.elem.name
@@ -152,6 +167,9 @@ class ArrayRefCType:
     def cpp_type_remove_namespaces(self) -> str:
         return f'at::ArrayRef<{self.elem.cpp_type_remove_namespaces()}>'
 
+    def with_name(self, *, name: str) -> 'ListCType':
+        return ArrayRefCType(self.elem.with_name(name=name))
+
     @property
     def name(self) -> ArgName:
         return self.elem.name
@@ -166,6 +184,9 @@ class VectorCType:
 
     def cpp_type_remove_namespaces(self) -> str:
         return f'std::vector<{self.elem.cpp_type_remove_namespaces()}>'
+
+    def with_name(self, *, name: str) -> 'ListCType':
+        return VectorCType(self.elem.with_name(name=name))
 
     @property
     def name(self) -> ArgName:
@@ -183,6 +204,9 @@ class ArrayCType:
     def cpp_type_remove_namespaces(self) -> str:
         return f'std::array<{self.elem.cpp_type_remove_namespaces()}, {self.size}>'
 
+    def with_name(self, *, name: str) -> 'ListCType':
+        return ArrayCType(self.elem.with_name(name=name))
+
     @property
     def name(self) -> ArgName:
         return self.elem.name
@@ -197,6 +221,9 @@ class TupleCType:
 
     def cpp_type_remove_namespaces(self) -> str:
         return f'std::tuple<{",".join([e.cpp_type_remove_namespaces() for e in self.elems])}>'
+
+    def with_name(self, *, name: str) -> 'ListCType':
+        return TupleCType(self.elem.with_name(name=name))
 
     @property
     def name(self) -> ArgName:
@@ -222,6 +249,14 @@ class Binding:
     @property
     def type(self) -> str:
         return self.ctype.cpp_type()
+
+    def with_name(self, *, name: str) -> 'Binding':
+        return Binding(
+            name=name,
+            ctype=self.ctype.with_name(name=name),
+            default=None,
+            argument=self.argument.with_name(name=name),
+        )
 
     def no_default(self) -> 'Binding':
         return Binding(
@@ -372,6 +407,12 @@ class DispatcherSignature:
     def name(self) -> str:
         return dispatcher.name(self.func)
 
+    def decl(self, name: Optional[str] = None) -> str:
+        args_str = ', '.join(a.decl() for a in self.arguments())
+        if name is None:
+            name = self.name()
+        return f"{self.returns_type().cpp_type()} {name}({args_str})"
+
     def defn(self, name: Optional[str] = None) -> str:
         args_str = ', '.join(a.defn() for a in self.arguments())
         if name is None:
@@ -402,6 +443,12 @@ class NativeSignature:
 
     def name(self) -> str:
         return self.prefix + native.name(self.func)
+
+    def decl(self, name: Optional[str] = None) -> str:
+        args_str = ', '.join(a.decl() for a in self.arguments())
+        if name is None:
+            name = self.name()
+        return f"{native.returns_type(self.func.returns).cpp_type()} {name}({args_str})"
 
     def defn(self, name: Optional[str] = None) -> str:
         args_str = ', '.join(a.defn() for a in self.arguments())
