@@ -4515,6 +4515,23 @@ def foo(xyz):
         self.assertEqual(scripted_y, f_data(y))
         self.assertEqual(scripted_x.requires_grad, False)
 
+    def test_with_ignore_context_manager(self):
+        class A(nn.Module):
+            def __init__(self):
+                super(A, self).__init__()
+            def forward(self):
+                a: int = 4
+                b: int = 5
+                c: int = 0
+                d: int = 6
+                with objmode(a="inp:int", b="inp:int", c="out:int", d="out:int"):
+                    l = [2 for i in range(a) if i > 2]
+                    c = l[0] + a + b
+                    d = 9
+                return c + d
+        s = torch.jit.script(A())
+        self.assertEqual(s(), 20)
+
     def test_tensor_dtype(self):
         x_byte = torch.empty(34, 56, 78, dtype=torch.uint8)
         x_long = torch.empty(34, 56, 78, dtype=torch.long)
