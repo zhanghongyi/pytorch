@@ -519,6 +519,8 @@ if(NOT INTERN_BUILD_MOBILE OR NOT BUILD_CAFFE2_MOBILE)
   list(APPEND MOBILE_DEBUG_SRCS "")
   if(USE_SOURCE_DEBUG_ON_MOBILE)
     set(MOBILE_EAGER_SYMOBLICATION_SRCS
+       ${TORCH_SRC_DIR}/csrc/jit/frontend/source_range.cpp
+       ${TORCH_SRC_DIR}/csrc/jit/ir/scope.cpp
        ${TORCH_SRC_DIR}/csrc/jit/mobile/debug_info.cpp
        ${TORCH_SRC_DIR}/csrc/jit/serialization/source_range_serialization.cpp
        ${TORCH_SRC_DIR}/csrc/jit/frontend/source_range.cpp
@@ -527,6 +529,7 @@ if(NOT INTERN_BUILD_MOBILE OR NOT BUILD_CAFFE2_MOBILE)
        ${TORCH_SRC_DIR}/csrc/jit/serialization/pickle.cpp
        ${TORCH_SRC_DIR}/csrc/jit/serialization/pickler.cpp
        ${TORCH_SRC_DIR}/csrc/jit/serialization/unpickler.cpp
+       ${TORCH_SRC_DIR}/csrc/jit/serialization/inlined_callstack_serialization.cpp
        )
     # For source debug on mobile, we have to add dependency on pickling
     # but references to read/writeArchiveAndTensor is not built for mobile
