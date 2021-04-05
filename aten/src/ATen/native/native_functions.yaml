@@ -129,10 +129,12 @@
   variants: method
 
 - func: _use_cudnn_ctc_loss(Tensor log_probs, Tensor targets, int[] input_lengths, int[] target_lengths, int blank) -> bool
+  device_guard: False
   dispatch:
     CUDA: _use_cudnn_ctc_loss
 
 - func: _cudnn_ctc_loss(Tensor log_probs, Tensor targets, int[] input_lengths, int[] target_lengths, int blank, bool deterministic, bool zero_infinity) -> (Tensor, Tensor)
+  device_guard: False
   dispatch:
     CUDA: _cudnn_ctc_loss
 
@@ -1917,6 +1919,7 @@
 
 - func: _index_put_impl_(Tensor(a!) self, Tensor?[] indices, Tensor values, bool accumulate=False, bool unsafe=False) -> Tensor(a!)
   variants: function
+  device_guard: False
   dispatch:
     CPU, CUDA: _index_put_impl_
 
@@ -4347,6 +4350,7 @@
     SparseCUDA: hspmm_sparse_cuda
 
 - func: copy_sparse_to_sparse_(Tensor(a!) self, Tensor src, bool non_blocking=False) -> Tensor(a!)
+  device_guard: False
   variants: function
   dispatch:
     SparseCPU, SparseCUDA: copy_sparse_
@@ -8569,6 +8573,7 @@
     CompositeExplicitAutograd: linalg_lstsq
 
 - func: _lstsq_helper_(Tensor(a!) self, Tensor(b!) rank, Tensor(c!) singular_values, Tensor(d!) infos, Tensor a, float cond, str driver_name) -> Tensor(a!)
+  device_guard: False
   variants: function
   dispatch:
     CPU: _lstsq_helper_cpu

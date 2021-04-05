@@ -7107,10 +7107,11 @@ class TestNN(NNTestCase):
 
             # input and weights are not at the same device
             with self.assertRaisesRegex(RuntimeError,
-                                        "Input and parameter tensors are not at the same device"):
+                                        "Expected all tensors to be on the same device"):
                 model(input.to('cuda:0'))
 
             # input and hiddens are not at the same device
+            # TODO: check why the device check is not cuaght at dispatch time
             with self.assertRaisesRegex(RuntimeError,
                                         r"Input and hidden tensors are not at the same device"):
                 if mode == 'LSTM':
@@ -7121,7 +7122,7 @@ class TestNN(NNTestCase):
             # hidden tensors are not at the same CUDA device
             if mode == 'LSTM':
                 with self.assertRaisesRegex(RuntimeError,
-                                            "Input and hidden tensors are not at the same device"):
+                                            "Expected all tensors to be on the same device"):
                     model(input.to('cuda:0'), (hidden.to('cuda:0'), hidden.to('cuda:1')))
 
     @unittest.skipIf(not TEST_MULTIGPU, "multi-GPU not supported")
@@ -7145,17 +7146,18 @@ class TestNN(NNTestCase):
 
         # input and weights are not at the same device
         with self.assertRaisesRegex(RuntimeError,
-                                    "Input and parameter tensors are not at the same device"):
+                                    "Expected all tensors to be on the same device"):
             model(input.to('cuda:0'))
 
         # input and hiddens are not at the same device
+        # TODO: check why the device check is not cuaght at dispatch time
         with self.assertRaisesRegex(RuntimeError,
                                     r"Input and hidden tensors are not at the same device"):
             model(input, (hidden_h.to('cuda:0'), hidden_c.to('cuda:0')))
 
         # hidden tensors are not at the same CUDA device
         with self.assertRaisesRegex(RuntimeError,
-                                    "Input and hidden tensors are not at the same device"):
+                                    "Expected all tensors to be on the same device"):
             model(input.to('cuda:0'), (hidden_h.to('cuda:0'), hidden_c.to('cuda:1')))
 
     def test_rnn_initial_hidden_state(self):
