@@ -42,7 +42,7 @@ TypePtr ScriptTypeParser::subscriptToType(
     }
     std::vector<TypePtr> subscript_expr_types;
     for (auto expr : subscript.subscript_exprs()) {
-      subscript_expr_types.push_back(parseTypeFromExprImpl(expr));
+      subscript_expr_types.emplace_back(parseTypeFromExprImpl(expr));
     }
     return TupleType::create(subscript_expr_types);
   } else if (typeName == "List") {
@@ -65,6 +65,12 @@ TypePtr ScriptTypeParser::subscriptToType(
         parseTypeFromExprImpl(*subscript.subscript_exprs().begin());
     return OptionalType::create(elem_type);
 
+  } else if (typeName == "Union") {
+    std::vector<TypePtr> subscript_expr_types;
+    for (auto expr : subscript.subscript_exprs()) {
+      subscript_expr_types.emplace_back(parseTypeFromExprImpl(expr));
+    }
+    return UnionType::create(subscript_expr_types);
   } else if (typeName == "Future") {
     if (subscript.subscript_exprs().size() != 1) {
       throw ErrorReport(subscript)

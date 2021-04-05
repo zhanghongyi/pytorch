@@ -326,13 +326,11 @@ c10::optional<TypePtr> unifyTypesImpl(const TypePtr& t1, const TypePtr& t2) {
   return c10::nullopt;
 }
 
-c10::optional<TypePtr> unifyTypes(const TypePtr& t1, const TypePtr& t2, bool default_to_any) {
+c10::optional<TypePtr> unifyTypes(const TypePtr& t1, const TypePtr& t2, bool default_to_union) {
   auto unified = unifyTypesImpl(t1, t2);
-
-  if (default_to_any && !unified) {
-    return AnyType::get();
+  if (default_to_union && !unified) {
+    return UnionType::create({t1, t2});
   }
-
   return unified;
 }
 
@@ -549,8 +547,14 @@ bool Type::isSubtypeOfExt(const TypePtr& rhs, std::ostream* why_not) const {
   if (rhs->kind() == TypeKind::AnyType || *this == *rhs) {
     return true;
   }
-  if(auto rhs_ = rhs->cast<OptionalType>()) {
+  if (auto rhs_ = rhs->cast<OptionalType>()) {
     return this->isSubtypeOfExt(rhs_->getElementType(), why_not);
+  }
+  if (auto rhs_ = rhs->cast<UnionType>()) {
+    // Check if `this` is a subtype of any of the types within the Union (`rhs_`)
+    return std::any_of(rhs_->types().begin(), rhs_->types().end(), [this](TypePtr const union_contained_type){
+      return this->isSubtypeOf(union_contained_type);
+    });
   }
   return false;
 }
@@ -747,6 +751,104 @@ TupleTypePtr TupleType::createNamed(
   return std::shared_ptr<TupleType>(new TupleType(
       field_types, qualName, schema)); // NOLINT(modernize-make-shared)
 }
+
+void flatten_union(TypePtr& type, std::vector<TypePtr>& res) {
+  if (type->kind() == UnionType::Kind) {
+    for (auto inner_type : type->expect<UnionType>()->types()) {
+      flatten_union(inner_type, res);
+    }
+  }
+  else if (type->kind() == OptionalType::Kind) {
+    auto inner_type = type->expect<OptionalType>()->getElementType();
+    if (inner_type->kind() == UnionType::Kind) {
+      flatten_union(inner_type, res);
+    }
+    else {
+      res.emplace_back(inner_type);
+    }
+    res.emplace_back(NoneType::get());
+  }
+  else {
+    res.emplace_back(type);
+  }
+}
+
+UnionType::UnionType(std::vector<TypePtr> types) :
+  Type(TypeKind::UnionType) {
+  // Flatten Unions of Unions while populating `types_`
+  for (auto type : types) {
+    flatten_union(type, types_);
+  }
+  // We want the elements to be sorted so we can easily compare two UnionType
+  // objects for equality in the future
+  std::sort(types_.begin(), types_.end(),
+  [](const TypePtr a, const TypePtr b) -> bool {
+    return a->kind() > b->kind();
+  });
+  // Filter out duplicate types
+  types_.erase(std::unique(types_.begin(), types_.end()), types_.end());
+  // Check if this Union allows None
+  can_hold_none_ = std::any_of(types_.begin(), types_.end(),
+    [](const TypePtr type) { return type->kind() == NoneType::Kind; });
+}
+
+bool UnionType::isSubtypeOfExt(const TypePtr& rhs_, std::ostream* why_not) const {
+  if (auto union_rhs = rhs_->cast<UnionType>()) {
+    // Fast path: The Union `types` vector is always sorted, so we can
+    // do an O(n) linear comparison of both vectors
+    if (this->types() == union_rhs->types()) {
+      return true;
+    }
+    // Final O(n^2) check since the vector comparison will falsely
+    // flag subtypes as not equal
+    return std::all_of(this->types_.begin(), this->types_.end(),
+      [&](TypePtr this_type) -> bool {
+        return union_rhs->can_hold_type(this_type);
+    });
+  }
+  if (auto optional_rhs = rhs_->cast<OptionalType>()) {
+    return types_.size() == 2
+      && can_hold_type(optional_rhs->getElementType())
+      && can_hold_none();
+  }
+  if (Type::isSubtypeOfExt(rhs_, why_not)) {
+    return true;
+  }
+  return false;
+}
+
+std::string UnionType::str() const {
+  std::stringstream ss;
+  ss << "Union[";
+  for (size_t i = 0; i < types().size(); ++i) {
+    if (i > 0) {
+      ss << ", ";
+    }
+    ss << types()[i]->str();
+  }
+  ss << "]";
+  return ss.str();
+}
+
+  // Check if a given TypePtr is an allowable member of this Union
+  bool UnionType::can_hold_type(TypePtr& type) const {
+    // Fast path for `NoneType`
+    if (type == NoneType::get()) {
+      return can_hold_none_;
+    }
+    return std::any_of(types_.begin(), types_.end(), [&](TypePtr union_contained_type){
+      return type->isSubtypeOf(union_contained_type);
+    });
+  }
+
+  bool UnionType::can_hold_type(const TypePtr& type) const {
+    if (type == NoneType::get()) {
+      return can_hold_none_;
+    }
+    return std::any_of(types_.begin(), types_.end(), [&](TypePtr union_contained_type){
+      return type->isSubtypeOf(union_contained_type);
+    });
+  }
 
 TupleType::TupleType(
     std::vector<TypePtr> elements,
@@ -1663,6 +1765,8 @@ size_t ClassType::addAttribute(
             (type->kind() == OptionalType::Kind &&
             type->expectRef<OptionalType>().getElementType()->kind() ==
                 TensorType::Kind) ||
+            (type->kind() == UnionType::Kind &&
+            type->expect<UnionType>()->can_hold_type(TensorType::get())) ||
             (type->kind() == NoneType::Kind),
         "Expecting parameter or buffer to have either None, Tensor or Optional[Tensor] type, but got: ",
         toString(type));

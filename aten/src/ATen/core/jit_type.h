@@ -97,6 +97,69 @@ struct SingleElementType : public Type {
   TypePtr elem;
 };
 
+struct UnionType;
+using UnionTypePtr = std::shared_ptr<UnionType>;
+struct TORCH_API UnionType : public Type {
+
+  friend struct Type;
+
+  static const TypeKind Kind = TypeKind::UnionType;
+
+  bool isSubtypeOfExt(const TypePtr& rhs_, std::ostream* why_not) const;
+
+  std::string str() const;
+
+  std::vector<TypePtr> present_types() const;
+
+  static UnionTypePtr create(
+      std::vector<TypePtr> types) {
+    return UnionTypePtr(new UnionType(
+        std::move(types)));
+  }
+
+  bool operator==(const Type& rhs) const override {
+    if (auto union_rhs = rhs.cast<UnionType>()) {
+      return types_ == union_rhs->types_;
+    }
+    return false;
+  }
+
+  at::ArrayRef<TypePtr> types() const {
+    return types_;
+  }
+
+  at::ArrayRef<TypePtr> containedTypes() const override {
+    return types();
+  }
+
+  // Check if a given TypePtr is an allowable member of this Union
+  bool can_hold_type(TypePtr& type) const;
+  bool can_hold_type(const TypePtr& type) const;
+
+  bool can_hold_none() const {
+    return can_hold_none_;
+  }
+
+ private:
+  // Possible types that could be held in this Union
+  UnionType(std::vector<TypePtr> types);
+
+  std::string annotation_str_impl(TypePrinter printer) const {
+    std::stringstream ss;
+    ss << "Union[";
+    for (size_t i = 0; i < types().size(); ++i) {
+      if (i > 0)
+        ss << ", ";
+      ss << types()[i]->annotation_str(printer);
+    }
+    ss << "]";
+    return ss.str();
+  }
+
+  std::vector<TypePtr> types_;
+  bool can_hold_none_;
+};
+
 struct OptionalType;
 using OptionalTypePtr = std::shared_ptr<OptionalType>;
 // This type represents an optional type, for each element type.
@@ -136,6 +199,9 @@ struct TORCH_API OptionalType
     }
     if (auto rhs_ = rhs->cast<OptionalType>()) {
       return getElementType()->isSubtypeOfExt(rhs_->getElementType(), why_not);
+    }
+    if (auto rhs_ = rhs->cast<UnionType>()) {
+      return rhs_->can_hold_type(this->getElementType()) && rhs_->can_hold_none();
     }
     return false;
   }
@@ -1541,6 +1607,12 @@ TORCH_API std::ostream& operator<<(std::ostream& os, const Stride& s);
 // what is the type, ignoring extra size/shape information?
 // e.g. Tensor(2x3) -> Dynamic, and Tuple(Tensor(2x3),...) -> Tuple(Dynamic,...)
 
+// `unshapedType` is used to remove Tensor subtypes to provide more
+// accurate aliasing information. For example, a Tensor of dimension
+// 4 could alias a Tensor of dimension 1 (via views, reshaping, etc.).
+// We need to treat all Tensor subtypes as simply "Tensor"; we also need
+// to create a new version of any container types in which internal
+// Tensors have undergone the same operation.
 inline TypePtr unshapedType(const TypePtr& type) {
   if (type->isSubtypeOf(TensorType::get())) {
     return TensorType::get();
@@ -1592,7 +1664,7 @@ inline at::ScalarType scalarTypeFromJitType(const c10::TypePtr& type) {
 TORCH_API c10::optional<TypePtr> unifyTypes(
     const TypePtr& t1,
     const TypePtr& t2,
-    bool default_to_any = false);
+    bool default_to_union = false);
 
 TORCH_API c10::optional<TypePtr> unifyTypeList(
     at::ArrayRef<TypePtr> elements,

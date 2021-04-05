@@ -130,7 +130,7 @@ def get_and_check_clang_format(verbose=False):
 
     # Load the reference hash and compare the actual hash to it.
     with open(hashpath, "r") as f:
-        reference_bin_hash = f.readline()
+        reference_bin_hash = f.readline().strip()
 
         if verbose:
             print("Reference Hash: {}".format(reference_bin_hash))
