@@ -10,6 +10,7 @@
 #include <c10/core/DispatchKeySet.h>
 #include <c10/core/impl/LocalDispatchKeySet.h>
 #include <c10/core/impl/SizesAndStrides.h>
+#include <c10/core/InferenceMode.h>
 #include <c10/core/MemoryFormat.h>
 #include <c10/core/Storage.h>
 #include <c10/core/TensorOptions.h>
@@ -228,20 +229,59 @@ struct C10_API VariableVersion {
   c10::intrusive_ptr<VersionCounter> version_counter_;
 
  public:
+  enum Disabled { DISABLED };
+  // It's okay to return true even for inference tensor which
+  // doesn't have version counter enabled.
   bool unique() const {
-    return 1 == version_counter_.use_count();
+    return this->enabled() ? 1 == version_counter_.use_count() : true;
   }
   // NOTE: As of C++11 and 14, default-constructing a std::atomic variable
   // leaves it in a persistently undefined state. See
   // https://cplusplus.github.io/LWG/issue2334.
   VariableVersion(uint32_t version = 0)
       : version_counter_(c10::make_intrusive<VersionCounter>(version)) {}
+  VariableVersion(Disabled) {}
 
-  void bump() noexcept {
-    ++version_counter_->version_;
+  bool enabled() const {
+    return version_counter_;
   }
 
-  uint32_t current_version() const noexcept {
+  // Note [Inplace update inference tensor]
+  // 1. Inplace update to inference tensor is forbidden in normal mode.
+  //   For example:
+  //     inference_tensor.copy_(normal_tensor_requires_grad)
+  //   This inplace makes inference_tensor have requires_grad=True and
+  //   have a grad_fn.  This is bad because views of `inference_tensor`
+  //   created in InferenceMode won't be able to know the grad_fn since
+  //   their ViewMeta were not recorded. To match NoGradMode behavior
+  //   that "inplace update to a view created in NoGradMode raise an error",
+  //   we just ban inplace update to inference tensor since we can't tell
+  //   if an inference tensor is a view created in InferenceMode.
+  //
+  //   Note that views of `inference_tensor` created in InferenceMode has proper
+  //   ViewMeta so that they're aware of the grad_fn correctly.
+  //
+  // 2. Inplace update to inference tensor in inference tensor is doesn't bump
+  //    version counter.
+  //    * It either doesn't call bump() by skipping InplaceOrView kernel,
+  //      - e.g. inference_tensor.add_(1)
+  //    * or bump() is a no-op for inference tensor.
+  //      - e.g. inference_tensor.add_(normal_tensor)
+  void bump() {
+    bool enabled = this->enabled();
+    TORCH_CHECK(enabled || InferenceMode::is_enabled(),
+      "Inplace update to inference tensor outside InferenceMode is not allowed."
+      "You can make a clone to get a normal tensor before doing inplace update.");
+    if (enabled) {
+      ++version_counter_->version_;
+    }
+  }
+
+  // Inference tensor doesn't have version counter so it shouldn't be
+  // accessed.
+  uint32_t current_version() const {
+    TORCH_CHECK(this->enabled(),
+      "Accessing version_counter of inference tensor is not allowed.");
     return version_counter_->version_;
   }
 };
@@ -341,7 +381,7 @@ struct C10_API TensorImpl : public c10::intrusive_ptr_target {
   TensorImpl(
       Storage&& storage,
       DispatchKeySet,
-      const caffe2::TypeMeta data_type);
+      const caffe2::TypeMeta data_type, bool is_view=false);
 
   /**
    * Construct a 1-dim 0 size tensor that doesn't have a storage.
@@ -366,7 +406,7 @@ struct C10_API TensorImpl : public c10::intrusive_ptr_target {
   // storage.  Still, we pass it in separately because it's easier to write
   // the initializer list if we're not worried about storage being moved out
   // from under us.
-  TensorImpl(Storage&& storage, DispatchKeySet, const caffe2::TypeMeta data_type, c10::optional<c10::Device>);
+  TensorImpl(Storage&& storage, DispatchKeySet, const caffe2::TypeMeta data_type, c10::optional<c10::Device>, bool is_view=false);
 
  public:
   TensorImpl(const TensorImpl&) = delete;
@@ -564,6 +604,8 @@ struct C10_API TensorImpl : public c10::intrusive_ptr_target {
   }
 
   // Inference tensor doesn't have autograd or InplaceOrView key.
+  // Invariant:
+  //   is_inference_tensor() == !version_counter_.enabled()
   bool is_inference_tensor() {
     bool no_InplaceOrView = !key_set_.has(c10::DispatchKey::InplaceOrView);
     bool no_Autograd = (key_set_ & c10::autograd_dispatch_keyset).empty();
@@ -1092,21 +1134,27 @@ struct C10_API TensorImpl : public c10::intrusive_ptr_target {
     refresh_contiguous();
   }
 
+  // Inference tensor doesn't have version counter,
+  // set_version_counter is no-op for them.
   void set_version_counter(
     const c10::VariableVersion& version_counter) noexcept {
-    version_counter_ = version_counter;
+    if (!this->is_inference_tensor()) {
+      version_counter_ = version_counter;
+    }
   }
 
   void set_version_counter(
     c10::VariableVersion&& version_counter) noexcept {
-    version_counter_ = std::move(version_counter);
+    if (!this->is_inference_tensor()) {
+      version_counter_ = std::move(version_counter);
+    }
   }
 
   const c10::VariableVersion& version_counter() const noexcept {
     return version_counter_;
   }
 
-  void bump_version() noexcept {
+  void bump_version() {
     version_counter_.bump();
   }
 

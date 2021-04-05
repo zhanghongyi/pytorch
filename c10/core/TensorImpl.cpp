@@ -59,16 +59,18 @@ void TensorImpl::_set_fw_grad(const at::Tensor& new_grad, const at::Tensor& self
 TensorImpl::TensorImpl(
     Storage&& storage,
     DispatchKeySet key_set,
-    const caffe2::TypeMeta data_type)
+    const caffe2::TypeMeta data_type,
+    bool is_view)
     // Use std::forward to suppress static analyzer false positive.
-    : TensorImpl(std::forward<Storage>(storage), key_set, data_type, storage.device()) {}
+    : TensorImpl(std::forward<Storage>(storage), key_set, data_type, storage.device(), is_view) {}
 
 TensorImpl::TensorImpl(DispatchKeySet key_set, const caffe2::TypeMeta data_type, c10::optional<c10::Device> device_opt)
     : TensorImpl({}, key_set, data_type, std::move(device_opt)) {}
 
 TensorImpl::TensorImpl(Storage&& storage, DispatchKeySet key_set, const caffe2::TypeMeta data_type,
-                       c10::optional<c10::Device> device_opt)
+                       c10::optional<c10::Device> device_opt, bool is_view)
     : storage_(std::move(storage)),
+      version_counter_(VariableVersion(VariableVersion::DISABLED)),
       storage_offset_(0),
       numel_(0),
       data_type_(data_type),
@@ -81,11 +83,12 @@ TensorImpl::TensorImpl(Storage&& storage, DispatchKeySet key_set, const caffe2::
     // UndefinedTensorImpl is a singleton, so we skip logging it
     C10_LOG_API_USAGE_ONCE("tensor.create");
   }
-  // After we removed Autograd keys from globally enabled set, every Tensor must be created with
-  // a backend DispatchKey and an AutogradBackend key.
-  // We automatically add the corresponding autograd key to key_set_ so that backends can stay
-  // in the old way of only registering with backend key like DispatchKey::CPU.
-  if (c10::InferenceMode::is_enabled()) {
+
+  bool inference_mode = c10::InferenceMode::is_enabled();
+
+  // Inference tensor doesn't have autograd related keys.
+  // View tensor preserves key_set from their base.
+  if (is_view || inference_mode) {
     // See Note [Expected TLS state in InferenceMode] for why we don't add Autograd & InplaceOrView keys.
     key_set_ = key_set;
   } else {
@@ -93,6 +96,11 @@ TensorImpl::TensorImpl(Storage&& storage, DispatchKeySet key_set, const caffe2::
     //       See Note [Dream: skip VariableType kernel when requires_grad=false]
     DispatchKey k = key_set.highestPriorityBackendTypeId();
     key_set_ = key_set | getAutogradRelatedKeySetFromBackend(k);
+  }
+
+  // Inference tensor doesn't have version counter.
+  if (!is_inference_tensor()) {
+    version_counter_ = VariableVersion();
   }
 
   // we would also like to check that non-cpu devices have an index, but some Caffe2 operators create
@@ -307,7 +315,13 @@ at::DataPtr PlacementDeleteContext::makeDataPtr(
 
 AutogradMetaInterface::~AutogradMetaInterface() {}
 
+// Setting requires_grad to true on inference tensor outside InferenceMode
+// is forbidden.  Ideally it would also be illegal inside InferenceMode but
+// there's no way that we can directly allocate a tensor to have
+// requires_grad = true in C++ constructor.
 void TensorImpl::set_requires_grad(bool requires_grad) {
+  TORCH_CHECK(!requires_grad || !is_inference_tensor() || c10::InferenceMode::is_enabled(),
+    "Setting requires_grad=True on inference tensor outside InferenceMode is not allowed.");
   if (!requires_grad && !autograd_meta_) return;
   if (!autograd_meta_) autograd_meta_ = impl::GetAutogradMetaFactory()->make();
   // NB: In principle, setting requires_grad to false could result in
