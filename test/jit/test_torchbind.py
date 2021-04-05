@@ -111,7 +111,7 @@ class TestTorchbind(JitTestCase):
         # Ensure we are creating the object and calling __init__
         # rather than calling the __init__wrapper nonsense
         fc = FileCheck().check('prim::CreateObject()')\
-                        .check('prim::CallMethod[name="__init__"]')
+                        .check('prim::CallMethod[name="__init____0"]')
         fc.run(str(scripted.graph))
         out = scripted()
         self.assertEqual(out.pop(), "mom")
@@ -326,6 +326,22 @@ class TestTorchbind(JitTestCase):
 
         traced = torch.jit.trace(TryTracing(), ())
         self.assertEqual(torch.zeros(4, 4), traced())
+
+    def test_torchbind_overloaded_method(self):
+        def f():
+            val = torch.classes._TorchScriptTesting._FooOverload(3, 5)
+            stuff1 = val.increment(4, 5)
+            stuff2 = val.increment(4)
+            stuff3 = val.increment(4, "hi")
+            return stuff1, stuff2, stuff3
+        self.checkScript(f, ())
+
+    def test_torchbind_overloaded_method_init(self):
+        def f():
+            val = torch.classes._TorchScriptTesting._FooOverloadInit(3, 4, "hi")
+            stuff = val.increment(4)
+            return stuff
+        self.checkScript(f, ())
 
     def test_torchbind_pass_wrong_type(self):
         with self.assertRaisesRegex(RuntimeError, 'missing attribute capsule'):

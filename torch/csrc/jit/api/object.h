@@ -131,6 +131,13 @@ struct TORCH_API Object {
     AT_ERROR("Property '", name, "' is not defined.");
   }
 
+  const std::vector<Method> get_overloaded_methods(
+      const std::string& basename) const {
+    return c10::fmap(
+        type()->findOverloadedMethod(basename),
+        [&](Function* func) { return Method(_ivalue(), func); });
+  }
+
   c10::optional<Method> find_method(const std::string& basename) const;
 
   /// Run a method from this module.

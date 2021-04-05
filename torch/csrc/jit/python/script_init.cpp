@@ -1268,7 +1268,6 @@ void initJitScriptBindings(PyObject* module) {
           "get_interface",
           [](const std::shared_ptr<CompilationUnit>& self,
              const std::string& name) { return self->get_interface(name); });
-
   py::class_<StrongFunctionPtr>(m, "ScriptFunction", py::dynamic_attr())
       .def(
           "__call__",
@@ -1360,7 +1359,6 @@ void initJitScriptBindings(PyObject* module) {
       .def_property_readonly("__doc__", [](const StrongFunctionPtr& self) {
         return self.function_->doc_string();
       });
-
   py::class_<Method>(m, "ScriptMethod", py::dynamic_attr())
       .def(
           "__call__",
@@ -1368,9 +1366,16 @@ void initJitScriptBindings(PyObject* module) {
             // see: [pybind11 varargs]
             HANDLE_TH_ERRORS
             Method& method = py::cast<Method&>(args[0]);
-
+            auto input_args = tuple_slice(std::move(args), 1);
+            auto input_kwargs = std::move(kwargs);
+            auto resolved_method =
+                method.matchOverloadedMethods({input_args, input_kwargs});
+            if (resolved_method.has_value()) {
+              return invokeScriptMethodFromPython(
+                  resolved_method.value(), input_args, input_kwargs);
+            }
             return invokeScriptMethodFromPython(
-                method, tuple_slice(std::move(args), 1), std::move(kwargs));
+                method, input_args, input_kwargs);
             END_HANDLE_TH_ERRORS_PYBIND
           })
       .def_property_readonly("graph", &Method::graph)

@@ -2,10 +2,13 @@
 #include <ATen/core/function.h>
 #include <ATen/core/ivalue.h>
 #include <ATen/core/stack.h>
+#include <c10/util/Optional.h>
 #include <torch/csrc/jit/api/function_impl.h>
 
 namespace torch {
 namespace jit {
+
+struct PythonArguments;
 
 using ObjectPtr = c10::intrusive_ptr<c10::ivalue::Object>;
 
@@ -51,6 +54,10 @@ struct TORCH_API Method {
   size_t num_inputs() const {
     return function_->num_inputs();
   }
+
+  // this method is implemented inside libtorch
+  c10::optional<Method> matchOverloadedMethods(
+      const struct PythonArguments& args);
 
   GraphExecutor& get_executor() {
     return function_->get_executor();

@@ -2176,6 +2176,13 @@ struct TORCH_API ClassType : public NamedType {
   void addMethod(torch::jit::Function* method);
   torch::jit::Function* findMethod(const std::string& name) const;
   torch::jit::Function& getMethod(const std::string& name) const;
+
+  void addOverloadedMethod(torch::jit::Function* method);
+  std::vector<torch::jit::Function*> findOverloadedMethod(
+      const std::string& name) const;
+  torch::jit::Function* getMangledOverloadedMethod(
+      const std::string& name) const;
+
   torch::jit::Function* findHook(const std::string& name) const;
   torch::jit::Function& getHook(const std::string& name) const;
   bool hasMethod(const std::string& name) const;
@@ -2246,6 +2253,14 @@ struct TORCH_API ClassType : public NamedType {
   // List of methods associated with this class.
   std::vector<torch::jit::Function*> methods_;
   std::vector<torch::jit::Function*> staticmethods_;
+
+  // Map of overloaded methods associated with this class that are keyed by
+  // method name
+  std::unordered_map<std::string, std::vector<torch::jit::Function*>>
+      overloaded_methods_;
+
+  // Map of mangled name to function pointer
+  std::unordered_map<std::string, torch::jit::Function*> mangled_to_function_;
 
   // List of hooks to be run before/after forward.
   std::vector<torch::jit::Function*> forward_hooks_;

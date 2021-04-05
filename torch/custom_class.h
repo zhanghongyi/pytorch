@@ -1,18 +1,18 @@
 #pragma once
 
-#include <ATen/core/stack.h>
 #include <ATen/core/builtin_function.h>
 #include <ATen/core/function_schema.h>
 #include <ATen/core/ivalue.h>
 #include <ATen/core/jit_type.h>
 #include <ATen/core/op_registration/infer_schema.h>
+#include <ATen/core/overloaded_function.h>
 #include <ATen/core/stack.h>
 #include <c10/util/C++17.h>
 #include <c10/util/Metaprogramming.h>
 #include <c10/util/TypeList.h>
 #include <c10/util/TypeTraits.h>
-#include <torch/library.h>
 #include <torch/custom_class_detail.h>
+#include <torch/library.h>
 #include <iostream>
 #include <sstream>
 
@@ -302,6 +302,7 @@ class class_ {
     auto method = std::make_unique<jit::BuiltinOpFunction>(
         qualClassName + "." + name, std::move(schema), std::move(func), std::move(doc_string));
     classTypePtr->addMethod(method.get());
+
     registerCustomClassMethod(std::move(method));
     return *this;
   }
@@ -455,15 +456,18 @@ class class_ {
           typename c10::guts::infer_function_traits_t<Func>::return_type;
       detail::BoxedProxy<RetType, Func>()(stack, func);
     };
-    auto method = std::make_unique<jit::BuiltinOpFunction>(
-        qualMethodName, std::move(schema), std::move(wrapped_func), std::move(doc_string));
+    auto method = std::make_unique<jit::OverloadedFunction>(
+        qualMethodName,
+        std::move(schema),
+        std::move(wrapped_func),
+        std::move(doc_string));
 
     // Register the method here to keep the Method alive.
     // ClassTypes do not hold ownership of their methods (normally it
     // those are held by the CompilationUnit), so we need a proxy for
     // that behavior here.
     auto method_val = method.get();
-    classTypePtr->addMethod(method_val);
+    classTypePtr->addOverloadedMethod(method.get());
     registerCustomClassMethod(std::move(method));
     return method_val;
   }
